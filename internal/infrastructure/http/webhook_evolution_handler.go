@@ -44,15 +44,10 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	// Skip group chats, broadcast lists, status updates and newsletters — a
-	// consumer's bot only engages 1:1 customer conversations.
-	jid := data.Key.RemoteJid
-	if strings.HasSuffix(jid, "@g.us") || strings.HasSuffix(jid, "@broadcast") || strings.HasSuffix(jid, "@newsletter") {
+	phone, ok := resolveInboundPhone(data.Key)
+	if !ok {
 		return c.SendStatus(fiber.StatusOK)
 	}
-
-	phone := strings.TrimSuffix(jid, "@s.whatsapp.net")
-	phone = strings.TrimSuffix(phone, "@c.us")
 
 	content := extractContent(data)
 	if content == "" {
@@ -68,6 +63,33 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 	h.forward.Execute(c.Context(), integrationID, event, correlationIDFrom(c))
 
 	return c.SendStatus(fiber.StatusOK)
+}
+
+// resolveInboundPhone returns the customer's phone (bare digits, no domain
+// suffix) for a 1:1 message, or ok=false when the event must be skipped:
+//   - group / broadcast / newsletter (a bot only engages 1:1 conversations)
+//   - a LID-addressed message whose real number (remoteJidAlt) is missing,
+//     since replying to an "<lid>@lid" JID never reaches the customer.
+//
+// WhatsApp LID addressing (privacy-preserving identity, increasingly the
+// default) puts an opaque Linked ID in remoteJid and the real phone in
+// remoteJidAlt — this is where that gets unwrapped.
+func resolveInboundPhone(key evolutionKey) (string, bool) {
+	jid := key.RemoteJid
+	if strings.HasSuffix(jid, "@g.us") || strings.HasSuffix(jid, "@broadcast") || strings.HasSuffix(jid, "@newsletter") {
+		return "", false
+	}
+
+	if key.AddressingMode == "lid" || strings.HasSuffix(jid, "@lid") {
+		if key.RemoteJidAlt == "" {
+			return "", false
+		}
+		jid = key.RemoteJidAlt
+	}
+
+	phone := strings.TrimSuffix(jid, "@s.whatsapp.net")
+	phone = strings.TrimSuffix(phone, "@c.us")
+	return phone, phone != ""
 }
 
 func extractContent(data evolutionData) string {
@@ -107,6 +129,10 @@ type evolutionKey struct {
 	RemoteJid string `json:"remoteJid"`
 	FromMe    bool   `json:"fromMe"`
 	ID        string `json:"id"`
+	// AddressingMode is "lid" when RemoteJid is a privacy Linked ID rather than
+	// a phone JID; RemoteJidAlt then carries the real "<phone>@s.whatsapp.net".
+	AddressingMode string `json:"addressingMode"`
+	RemoteJidAlt   string `json:"remoteJidAlt"`
 }
 
 type evolutionMessage struct {
