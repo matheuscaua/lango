@@ -27,6 +27,61 @@ services:
       timeout: 3s
       retries: 5
 
+  evolution-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution
+      POSTGRES_DB: evolution
+    ports:
+      - "5434:5432"
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  evolution:
+    # evoapicloud:v2.3.6/v2.3.7 both fail sendList/sendButtons ("this.isZero is
+    # not a function") — a Baileys-library regression (>=6.7.18), not fixed by
+    # pinning the evolution-api version alone. atendai:v2.2.3 reportedly still
+    # bundles the older, working Baileys 6.7.12, but its Docker Hub image
+    # currently refuses anonymous pulls here ("pull access denied") — untried.
+    # Mitigated at the application layer: haraka's bot never renders WhatsApp
+    # List Messages when the active provider is Evolution — it links out to
+    # the kituo-menyu storefront (/:slug/menu) instead. See
+    # DeterministicBotUseCase.buildCategoryListDecision (haraka repo).
+    # https://github.com/EvolutionAPI/evolution-api/issues/2390
+    # https://github.com/EvolutionAPI/evolution-api/issues/1620
+    image: evoapicloud/evolution-api:v2.3.6
+    ports:
+      - "8083:8080"
+    environment:
+      SERVER_URL: http://localhost:8083
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: lango-evolution-key
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution@evolution-postgres:5432/evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      LOG_LEVEL: ERROR
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+    volumes:
+      - evolution_data:/evolution/instances
+
 volumes:
   postgres_data:
   redis_data:
+  evolution_data:
+  evolution_postgres_data:

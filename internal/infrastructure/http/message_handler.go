@@ -22,10 +22,16 @@ func NewMessageHandler(sendUC *application.SendMessageUseCase) *MessageHandler {
 }
 
 type sendMessageRequest struct {
-	Type    string              `json:"type"` // "text" | "list" | "buttons"
-	Phone   string              `json:"phone"`
-	Content string              `json:"content"`
-	Options []sendMessageOption `json:"options,omitempty"`
+	Type    string `json:"type"` // "text" | "list" | "buttons"
+	Phone   string `json:"phone"`
+	Content string `json:"content"`
+	// Title, Footer and ButtonText are opaque list-message chrome, forwarded
+	// as-is to the provider — lango never generates or interprets them, only
+	// some providers (e.g. Twilio's Content API) require ButtonText non-empty.
+	Title      string              `json:"title,omitempty"`
+	Footer     string              `json:"footer,omitempty"`
+	ButtonText string              `json:"button_text,omitempty"`
+	Options    []sendMessageOption `json:"options,omitempty"`
 }
 
 type sendMessageOption struct {
@@ -93,7 +99,10 @@ func buildMessage(req sendMessageRequest) (*domain.Message, error) {
 			rows = append(rows, domain.ListRow{RowID: opt.ID, Title: opt.Label})
 		}
 		list := domain.ListMessage{
+			Title:       req.Title,
 			Description: req.Content,
+			Footer:      req.Footer,
+			ButtonText:  req.ButtonText,
 			Sections:    []domain.ListSection{{Rows: rows}},
 		}
 		encoded, err := marshalList(list)

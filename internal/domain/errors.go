@@ -19,4 +19,9 @@ var (
 	ErrInvalidPhoneNumber  = errors.New("phone number is not in E.164 format")
 	ErrUnsupportedMessage  = errors.New("unsupported message type for this provider")
 	ErrUnsupportedProvider = errors.New("unsupported provider")
+
+	// ErrConnectQRNotAvailable means the instance has no pending QR — typically
+	// because it's already connected (a state change slipped in between the
+	// caller's connection-state check and the QR fetch).
+	ErrConnectQRNotAvailable = errors.New("evolution: QR code not available")
 )

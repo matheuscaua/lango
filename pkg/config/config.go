@@ -26,9 +26,20 @@ type Config struct {
 	// app, not per phone number).
 	WhatsAppAppSecret string
 
-	// Evolution API (self-hosted) — base URL, shared across every integration
-	// that uses provider="evolution" (they're all instances on the same host).
+	// Evolution API (self-hosted) — base URL and admin API key, shared across
+	// every integration that uses provider="evolution" (they're all instances
+	// on the same host, authenticated with one global key). The per-integration
+	// Integration.AccessToken is auto-filled with this same key on create —
+	// existing message-send code paths keep reading it from there.
 	EvolutionAPIURL string
+	EvolutionAPIKey string
+
+	// Base URL Evolution (running in Docker) uses to reach this service's
+	// webhook — distinct from PublicWebhookBaseURL (a real public tunnel,
+	// needed for Twilio's signature validation). Evolution and lango share the
+	// same Docker host in local dev, so the container reaches the host process
+	// via host.docker.internal instead of a public tunnel.
+	EvolutionWebhookBaseURL string
 
 	// Public HTTPS base URL for this service (e.g. a cloudflared tunnel) —
 	// needed to verify Twilio webhook signatures, which are computed over the
@@ -54,9 +65,11 @@ func Load() (*Config, error) {
 
 		WhatsAppAppSecret: os.Getenv("WHATSAPP_APP_SECRET"),
 		EvolutionAPIURL:   os.Getenv("EVOLUTION_API_URL"),
+		EvolutionAPIKey:   getEnv("EVOLUTION_API_KEY", "lango-evolution-key"),
 
 		PublicWebhookBaseURL: os.Getenv("PUBLIC_WEBHOOK_BASE_URL"),
 	}
+	cfg.EvolutionWebhookBaseURL = getEnv("EVOLUTION_WEBHOOK_BASE_URL", "http://host.docker.internal:"+cfg.Port)
 
 	if err := cfg.validate(); err != nil {
 		return nil, err

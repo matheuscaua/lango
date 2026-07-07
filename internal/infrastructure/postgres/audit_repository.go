@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,6 +45,35 @@ func (r *AuditRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status
 		return fmt.Errorf("update audit entry status: %w", err)
 	}
 	return nil
+}
+
+func (r *AuditRepository) SummarizeIntegration(ctx context.Context, integrationID uuid.UUID, since time.Time) (*domain.IntegrationActivitySummary, error) {
+	const q = `
+		SELECT
+			MAX(created_at) FILTER (WHERE direction = 'inbound')  AS last_inbound_at,
+			MAX(created_at) FILTER (WHERE direction = 'outbound') AS last_outbound_at,
+			COALESCE((
+				SELECT status FROM message_audit_entries
+				WHERE integration_id = $1 AND direction = 'outbound'
+				ORDER BY created_at DESC LIMIT 1
+			), '') AS last_outbound_status,
+			COUNT(*) FILTER (WHERE direction = 'outbound' AND status = 'sent' AND created_at >= $2) AS sent_count,
+			COUNT(*) FILTER (WHERE direction = 'outbound'
+				AND status IN ('failed', 'rejected', 'forward_failed')
+				AND created_at >= $2) AS failed_count
+		FROM message_audit_entries
+		WHERE integration_id = $1`
+
+	var s domain.IntegrationActivitySummary
+	var lastStatus string
+	err := r.db.QueryRow(ctx, q, integrationID, since).Scan(
+		&s.LastInboundAt, &s.LastOutboundAt, &lastStatus, &s.SentCount, &s.FailedCount,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("summarize integration audit: %w", err)
+	}
+	s.LastOutboundStatus = domain.AuditStatus(lastStatus)
+	return &s, nil
 }
 
 func (r *AuditRepository) ListByConsumer(ctx context.Context, consumerID uuid.UUID, integrationID *uuid.UUID, status domain.AuditStatus, limit int) ([]*domain.MessageAuditEntry, error) {

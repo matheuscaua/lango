@@ -20,3 +20,14 @@ type MessageMetrics interface {
 	IncrementSent(ctx context.Context, integrationID uuid.UUID) error
 	GetMonthly(ctx context.Context, integrationID uuid.UUID, year int, month int) (int64, error)
 }
+
+// EvolutionAdmin abstracts the Evolution API's instance-management surface —
+// only implemented for provider="evolution"; Meta and Twilio have their own
+// manual connection flows (dashboard app review / console), no code-driven
+// "connect" exists for them.
+type EvolutionAdmin interface {
+	CreateInstance(ctx context.Context, instanceName string) error
+	SetWebhook(ctx context.Context, instanceName, webhookURL string) error
+	ConnectionState(ctx context.Context, instanceName string) (string, error)
+	GetQR(ctx context.Context, instanceName string) (string, error)
+}

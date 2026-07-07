@@ -1,6 +1,8 @@
 package application_test
 
 import (
+	"time"
+
 	"context"
 	"errors"
 	"testing"
@@ -47,6 +49,10 @@ func (m *mockAuditRepo) UpdateStatus(_ context.Context, id uuid.UUID, status dom
 }
 func (m *mockAuditRepo) ListByConsumer(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ domain.AuditStatus, _ int) ([]*domain.MessageAuditEntry, error) {
 	return m.entries, nil
+}
+
+func (m *mockAuditRepo) SummarizeIntegration(_ context.Context, _ uuid.UUID, _ time.Time) (*domain.IntegrationActivitySummary, error) {
+	return &domain.IntegrationActivitySummary{}, nil
 }
 
 type mockProvider struct {

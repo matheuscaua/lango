@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/kituomenyu/lango/internal/application"
 	"github.com/kituomenyu/lango/internal/domain"
 	"github.com/kituomenyu/lango/internal/infrastructure/evolutionapi"
@@ -69,6 +71,11 @@ func main() {
 	sendUC := application.NewSendMessageUseCase(integrationRepo, auditRepo, providers)
 	forwardUC := application.NewForwardInboundUseCase(integrationRepo, consumerRepo, auditRepo)
 
+	evolutionAdmin := evolutionapi.NewAdminClient(cfg.EvolutionAPIURL, cfg.EvolutionAPIKey)
+	connectUC := application.NewConnectIntegrationUseCase(integrationRepo, evolutionAdmin, func(integrationID uuid.UUID) string {
+		return fmt.Sprintf("%s/webhooks/evolution/%s", cfg.EvolutionWebhookBaseURL, integrationID)
+	})
+
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	app := fiber.New(fiber.Config{
 		AppName:      "lango",
@@ -110,7 +117,7 @@ func main() {
 	webhookMeta := infrahttp.NewWebhookHandler(integrationRepo, forwardUC, cfg.WhatsAppAppSecret)
 	webhookEvolution := infrahttp.NewWebhookEvolutionHandler(forwardUC)
 	webhookTwilio := infrahttp.NewWebhookTwilioHandler(integrationRepo, forwardUC, cfg.PublicWebhookBaseURL)
-	integrationHandler := infrahttp.NewIntegrationHandler(integrationRepo)
+	integrationHandler := infrahttp.NewIntegrationHandler(integrationRepo, auditRepo, cfg.EvolutionAPIKey, connectUC)
 	messageHandler := infrahttp.NewMessageHandler(sendUC)
 	auditHandler := infrahttp.NewAuditHandler(auditRepo)
 

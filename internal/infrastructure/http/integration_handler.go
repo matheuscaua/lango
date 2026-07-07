@@ -1,8 +1,12 @@
 package http
 
 import (
+	"errors"
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/kituomenyu/lango/internal/application"
 	"github.com/kituomenyu/lango/internal/domain"
 	pkgmiddleware "github.com/kituomenyu/lango/pkg/middleware"
 )
@@ -11,11 +15,19 @@ import (
 // the authenticated consumer — a consumer can never read or modify an
 // integration it doesn't own (ADR 008).
 type IntegrationHandler struct {
-	repo domain.IntegrationRepository
+	repo            domain.IntegrationRepository
+	audit           domain.MessageAuditRepository
+	evolutionAPIKey string
+	connect         *application.ConnectIntegrationUseCase // nil disables POST /:id/connect (501)
 }
 
-func NewIntegrationHandler(repo domain.IntegrationRepository) *IntegrationHandler {
-	return &IntegrationHandler{repo: repo}
+func NewIntegrationHandler(
+	repo domain.IntegrationRepository,
+	audit domain.MessageAuditRepository,
+	evolutionAPIKey string,
+	connect *application.ConnectIntegrationUseCase,
+) *IntegrationHandler {
+	return &IntegrationHandler{repo: repo, audit: audit, evolutionAPIKey: evolutionAPIKey, connect: connect}
 }
 
 type createIntegrationRequest struct {
@@ -39,9 +51,6 @@ func (h *IntegrationHandler) Create(c *fiber.Ctx) error {
 	if req.Provider != "meta" && req.Provider != "evolution" && req.Provider != "twilio" {
 		return fiber.NewError(fiber.StatusBadRequest, "provider must be one of: meta, evolution, twilio")
 	}
-	if req.PhoneNumberID == "" || req.AccessToken == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "phone_number_id and access_token are required")
-	}
 
 	integration := &domain.Integration{
 		ConsumerID:    consumerID,
@@ -51,6 +60,24 @@ func (h *IntegrationHandler) Create(c *fiber.Ctx) error {
 		VerifyToken:   req.VerifyToken,
 		Active:        true,
 	}
+
+	if req.Provider == "evolution" {
+		// Evolution has no per-caller credentials to supply up front: one
+		// global admin key (shared by every evolution integration on this
+		// lango instance) authenticates instance management, and the
+		// instance itself doesn't exist yet — it's created by the connect
+		// flow, keyed by this integration's own ID. Not connected until a
+		// human scans the QR (see ConnectIntegrationUseCase), so Active
+		// starts false.
+		id := uuid.New()
+		integration.ID = id
+		integration.PhoneNumberID = id.String()
+		integration.AccessToken = h.evolutionAPIKey
+		integration.Active = false
+	} else if req.PhoneNumberID == "" || req.AccessToken == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "phone_number_id and access_token are required")
+	}
+
 	if err := h.repo.Save(c.Context(), integration); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to save integration")
 	}
@@ -100,6 +127,83 @@ func (h *IntegrationHandler) Get(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(integrationResponse(integration))
+}
+
+// Status handles GET /v1/integrations/:id/status — the channel-health summary
+// consumers poll to answer "is my WhatsApp number alive?" without access to
+// the raw audit trail of other tenants. Counters cover the last 24h.
+func (h *IntegrationHandler) Status(c *fiber.Ctx) error {
+	consumerID, ok := pkgmiddleware.ConsumerIDFromLocals(c)
+	if !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "missing consumer context")
+	}
+
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid integration id")
+	}
+
+	integration, err := h.repo.GetByID(c.Context(), id)
+	if err != nil || integration.ConsumerID != consumerID {
+		// Same response for both cases — never reveal foreign integrations.
+		return fiber.NewError(fiber.StatusNotFound, "integration not found")
+	}
+
+	summary, err := h.audit.SummarizeIntegration(c.Context(), id, time.Now().UTC().Add(-24*time.Hour))
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to summarize integration activity")
+	}
+
+	return c.JSON(fiber.Map{
+		"integration_id":       integration.ID,
+		"provider":             integration.Provider,
+		"active":               integration.Active,
+		"last_inbound_at":      summary.LastInboundAt,
+		"last_outbound_at":     summary.LastOutboundAt,
+		"last_outbound_status": string(summary.LastOutboundStatus),
+		"sent_24h":             summary.SentCount,
+		"failed_24h":           summary.FailedCount,
+	})
+}
+
+// Connect handles POST /v1/integrations/:id/connect — creates the Evolution
+// instance if needed, (re)configures its webhook, and returns either a fresh
+// QR code to scan or "connected" if the number is already linked. Callers
+// poll this repeatedly until connected (see ConnectIntegrationUseCase).
+func (h *IntegrationHandler) Connect(c *fiber.Ctx) error {
+	if h.connect == nil {
+		return fiber.NewError(fiber.StatusNotImplemented, "evolution connect flow is not configured on this lango instance")
+	}
+
+	consumerID, ok := pkgmiddleware.ConsumerIDFromLocals(c)
+	if !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "missing consumer context")
+	}
+
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid integration id")
+	}
+
+	result, err := h.connect.Execute(c.Context(), application.ConnectIntegrationInput{
+		ConsumerID:    consumerID,
+		IntegrationID: id,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrIntegrationNotFound), errors.Is(err, domain.ErrIntegrationNotOwned):
+			return fiber.NewError(fiber.StatusNotFound, "integration not found")
+		case errors.Is(err, application.ErrConnectUnsupportedProvider):
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		default:
+			return fiber.NewError(fiber.StatusBadGateway, "failed to connect integration")
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"state":     string(result.State),
+		"qr_base64": result.QRBase64,
+	})
 }
 
 func integrationResponse(i *domain.Integration) fiber.Map {

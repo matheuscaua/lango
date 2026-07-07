@@ -63,6 +63,17 @@ func NewAuditEntry(consumerID, integrationID uuid.UUID, direction AuditDirection
 	}
 }
 
+// IntegrationActivitySummary condenses an integration's audit trail into the
+// health signals a consumer needs to show "is this channel alive?" — computed
+// entirely from MessageAuditEntry rows, never stored.
+type IntegrationActivitySummary struct {
+	LastInboundAt      *time.Time
+	LastOutboundAt     *time.Time
+	LastOutboundStatus AuditStatus // "" when the integration never sent anything
+	SentCount          int64       // outbound entries with status=sent since the window start
+	FailedCount        int64       // outbound entries with status in (failed, rejected, forward_failed) since the window start
+}
+
 // MessageAuditRepository abstracts persistence for the audit trail.
 type MessageAuditRepository interface {
 	// Append writes a new audit entry (append-only).
@@ -72,4 +83,7 @@ type MessageAuditRepository interface {
 	// ListByConsumer returns audit entries for a consumer, optionally filtered by
 	// integration and status, newest first. Empty filters are ignored.
 	ListByConsumer(ctx context.Context, consumerID uuid.UUID, integrationID *uuid.UUID, status AuditStatus, limit int) ([]*MessageAuditEntry, error)
+	// SummarizeIntegration aggregates the trail for one integration; counters
+	// are restricted to entries created at/after `since`.
+	SummarizeIntegration(ctx context.Context, integrationID uuid.UUID, since time.Time) (*IntegrationActivitySummary, error)
 }
