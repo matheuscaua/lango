@@ -78,6 +78,7 @@ func main() {
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	app := fiber.New(fiber.Config{
+		Network:      "tcp",
 		AppName:      "lango",
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
