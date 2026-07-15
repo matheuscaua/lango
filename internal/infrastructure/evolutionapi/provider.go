@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -98,7 +99,8 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("evolution API returned HTTP %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("evolution API returned HTTP %d: %s", resp.StatusCode, respBody)
 	}
 
 	if p.metrics != nil {
@@ -145,7 +147,8 @@ func (p *Provider) SendTemplate(ctx context.Context, integrationID uuid.UUID, ph
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("evolution API returned HTTP %d for template", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("evolution API returned HTTP %d for template: %s", resp.StatusCode, respBody)
 	}
 
 	if p.metrics != nil {
