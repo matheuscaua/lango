@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,10 +15,11 @@ import (
 // WebhookEvolutionHandler handles inbound HTTP events from a self-hosted Evolution API instance.
 type WebhookEvolutionHandler struct {
 	forward *application.ForwardInboundUseCase
+	audit   domain.MessageAuditRepository // nil disables delivery/read receipt handling
 }
 
-func NewWebhookEvolutionHandler(forward *application.ForwardInboundUseCase) *WebhookEvolutionHandler {
-	return &WebhookEvolutionHandler{forward: forward}
+func NewWebhookEvolutionHandler(forward *application.ForwardInboundUseCase, audit domain.MessageAuditRepository) *WebhookEvolutionHandler {
+	return &WebhookEvolutionHandler{forward: forward, audit: audit}
 }
 
 // ReceiveWebhook handles POST /webhooks/evolution/:integration_id.
@@ -33,7 +35,15 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "malformed evolution webhook payload")
 	}
 
-	if payload.Event != "messages.upsert" {
+	// Delivery/read acks for messages WE sent arrive as messages.update — record
+	// them against the outbound audit entry so the channel status reflects "read".
+	eventLower := strings.ToLower(payload.Event)
+	if eventLower == "messages.update" {
+		h.handleStatusUpdate(c, integrationID, payload.Data)
+		return c.SendStatus(fiber.StatusOK)
+	}
+
+	if eventLower != "messages.upsert" {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
@@ -92,6 +102,49 @@ func resolveInboundPhone(key evolutionKey) (string, bool) {
 	return phone, phone != ""
 }
 
+// handleStatusUpdate maps an Evolution messages.update ack to an outbound
+// delivery status and records it against the matching audit entry. Best-effort:
+// unknown statuses, a missing message id, or no audit repo are silently skipped
+// (the rank guard in MarkOutboundStatusByExternalID also ignores regressions).
+func (h *WebhookEvolutionHandler) handleStatusUpdate(c *fiber.Ctx, integrationID uuid.UUID, data evolutionData) {
+	if h.audit == nil {
+		return
+	}
+	// v2 puts the sent message's id in `keyId`; older payloads nest it in key.id.
+	messageID := data.KeyID
+	if messageID == "" {
+		messageID = data.Key.ID
+	}
+	if messageID == "" {
+		return
+	}
+	status, ok := mapEvolutionAckStatus(data.Status)
+	if !ok {
+		return
+	}
+	if err := h.audit.MarkOutboundStatusByExternalID(c.Context(), integrationID, messageID, status); err != nil {
+		slog.WarnContext(c.Context(), "evolution status update: failed to record receipt",
+			slog.String("integration_id", integrationID.String()),
+			slog.String("message_id", messageID),
+			slog.String("err", err.Error()))
+	}
+}
+
+// mapEvolutionAckStatus translates Evolution/Baileys ack strings into the audit
+// lifecycle. Baileys statuses vary across versions; we only act on the two that
+// matter for a receipt (delivered/read) and ignore the rest (SERVER_ACK/PENDING
+// add nothing past "sent"). ok=false means "not a status worth recording".
+func mapEvolutionAckStatus(raw string) (domain.AuditStatus, bool) {
+	switch strings.ToUpper(raw) {
+	case "DELIVERY_ACK", "DELIVERED":
+		return domain.AuditStatusDelivered, true
+	case "READ", "PLAYED":
+		return domain.AuditStatusRead, true
+	default:
+		return "", false
+	}
+}
+
 func extractContent(data evolutionData) string {
 	switch data.MessageType {
 	case "conversation":
@@ -123,6 +176,9 @@ type evolutionData struct {
 	Key         evolutionKey     `json:"key"`
 	MessageType string           `json:"messageType"`
 	Message     evolutionMessage `json:"message"`
+	// messages.update fields — the sent message's id and its delivery ack.
+	KeyID  string `json:"keyId"`
+	Status string `json:"status"`
 }
 
 type evolutionKey struct {
