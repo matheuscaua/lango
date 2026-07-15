@@ -116,7 +116,7 @@ func main() {
 
 	// ── Handlers + routes ─────────────────────────────────────────────────────
 	webhookMeta := infrahttp.NewWebhookHandler(integrationRepo, forwardUC, cfg.WhatsAppAppSecret)
-	webhookEvolution := infrahttp.NewWebhookEvolutionHandler(forwardUC)
+	webhookEvolution := infrahttp.NewWebhookEvolutionHandler(forwardUC, auditRepo)
 	webhookTwilio := infrahttp.NewWebhookTwilioHandler(integrationRepo, forwardUC, cfg.PublicWebhookBaseURL)
 	integrationHandler := infrahttp.NewIntegrationHandler(integrationRepo, auditRepo, cfg.EvolutionAPIKey, connectUC)
 	messageHandler := infrahttp.NewMessageHandler(sendUC)

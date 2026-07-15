@@ -19,12 +19,19 @@ type AuditStatus string
 const (
 	AuditStatusAccepted      AuditStatus = "accepted" // outbound: audit row written before calling the provider
 	AuditStatusSent          AuditStatus = "sent"
+	AuditStatusDelivered     AuditStatus = "delivered" // outbound: provider reported the message reached the device
+	AuditStatusRead          AuditStatus = "read"      // outbound: provider reported the recipient opened it
 	AuditStatusFailed        AuditStatus = "failed"
 	AuditStatusRejected      AuditStatus = "rejected" // validation/ownership failed before dispatch
 	AuditStatusReceived      AuditStatus = "received" // inbound: webhook accepted
 	AuditStatusForwarded     AuditStatus = "forwarded"
 	AuditStatusForwardFailed AuditStatus = "forward_failed"
 )
+
+// The outbound delivery lifecycle is ordered accepted → sent → delivered → read.
+// A late/duplicate/out-of-order provider status webhook must never move an entry
+// backwards; that guard lives in MessageAuditRepository.MarkOutboundStatusByExternalID
+// (the postgres impl enforces it in SQL via array_position).
 
 // MessageAuditEntry is an append-only record of one send attempt or one
 // inbound webhook receipt. Mirrors the pattern already used in haraka for
@@ -69,8 +76,8 @@ func NewAuditEntry(consumerID, integrationID uuid.UUID, direction AuditDirection
 type IntegrationActivitySummary struct {
 	LastInboundAt      *time.Time
 	LastOutboundAt     *time.Time
-	LastOutboundStatus AuditStatus // "" when the integration never sent anything
-	SentCount          int64       // outbound entries with status=sent since the window start
+	LastOutboundStatus AuditStatus // "" when the integration never sent anything; may be sent/delivered/read
+	SentCount          int64       // successfully-dispatched outbound entries since the window start (status in sent/delivered/read)
 	FailedCount        int64       // outbound entries with status in (failed, rejected, forward_failed) since the window start
 }
 
@@ -80,6 +87,15 @@ type MessageAuditRepository interface {
 	Append(ctx context.Context, e *MessageAuditEntry) error
 	// UpdateStatus moves an existing entry's status forward (e.g. accepted -> sent/failed).
 	UpdateStatus(ctx context.Context, id uuid.UUID, status AuditStatus, errorReason string) error
+	// MarkSent records a successful dispatch: sets status=sent and stores the
+	// provider's message id as external_id, which later delivery/read status
+	// webhooks are matched against (see MarkOutboundStatusByExternalID).
+	MarkSent(ctx context.Context, id uuid.UUID, externalID string) error
+	// MarkOutboundStatusByExternalID advances the delivery status of the
+	// outbound entry for (integrationID, externalID) — the only keys a provider
+	// status webhook carries. No-op when no matching entry exists (e.g. a status
+	// callback for a message sent before receipts were wired).
+	MarkOutboundStatusByExternalID(ctx context.Context, integrationID uuid.UUID, externalID string, status AuditStatus) error
 	// ListByConsumer returns audit entries for a consumer, optionally filtered by
 	// integration and status, newest first. Empty filters are ignored.
 	ListByConsumer(ctx context.Context, consumerID uuid.UUID, integrationID *uuid.UUID, status AuditStatus, limit int) ([]*MessageAuditEntry, error)

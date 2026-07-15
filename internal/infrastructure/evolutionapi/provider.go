@@ -46,10 +46,10 @@ func (p *Provider) WithBaseURL(u string) *Provider {
 	return p
 }
 
-func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *domain.Message) error {
+func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *domain.Message) (string, error) {
 	cfg, err := p.integrations.GetByID(ctx, integrationID)
 	if err != nil {
-		return fmt.Errorf("get integration %s: %w", integrationID, err)
+		return "", fmt.Errorf("get integration %s: %w", integrationID, err)
 	}
 
 	var path string
@@ -63,7 +63,7 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 	case domain.TypeInteractive:
 		var list domain.ListMessage
 		if err := json.Unmarshal([]byte(msg.Content), &list); err != nil {
-			return fmt.Errorf("decode interactive list payload: %w", err)
+			return "", fmt.Errorf("decode interactive list payload: %w", err)
 		}
 		path = "sendList"
 		payload = map[string]any{
@@ -76,31 +76,31 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 		}
 
 	default:
-		return fmt.Errorf("evolutionapi: unsupported message type %s", msg.Type)
+		return "", fmt.Errorf("evolutionapi: unsupported message type %s", msg.Type)
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal evolution payload: %w", err)
+		return "", fmt.Errorf("marshal evolution payload: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/message/%s/%s", p.baseURL, path, cfg.PhoneNumberID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build evolution request: %w", err)
+		return "", fmt.Errorf("build evolution request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("apikey", cfg.AccessToken)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("send evolution message: %w", err)
+		return "", fmt.Errorf("send evolution message: %w", err)
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("evolution API returned HTTP %d: %s", resp.StatusCode, respBody)
+		return "", fmt.Errorf("evolution API returned HTTP %d: %s", resp.StatusCode, respBody)
 	}
 
 	if p.metrics != nil {
@@ -111,7 +111,16 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 		}()
 	}
 
-	return nil
+	// Evolution echoes the sent message's Baileys key; key.id is what a later
+	// MESSAGES_UPDATE (delivery/read ack) webhook references. Best-effort — an
+	// unparseable body just means this send can't be correlated to a receipt.
+	var sent struct {
+		Key struct {
+			ID string `json:"id"`
+		} `json:"key"`
+	}
+	_ = json.Unmarshal(respBody, &sent)
+	return sent.Key.ID, nil
 }
 
 // SendTemplate is not supported by Evolution API (no template approval flow).

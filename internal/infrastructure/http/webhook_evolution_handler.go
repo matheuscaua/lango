@@ -38,6 +38,8 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 	// Delivery/read acks for messages WE sent arrive as messages.update — record
 	// them against the outbound audit entry so the channel status reflects "read".
 	eventLower := strings.ToLower(payload.Event)
+	eventLower = strings.ReplaceAll(eventLower, "_", ".")
+
 	if eventLower == "messages.update" {
 		h.handleStatusUpdate(c, integrationID, payload.Data)
 		return c.SendStatus(fiber.StatusOK)

@@ -47,6 +47,23 @@ func (m *mockAuditRepo) UpdateStatus(_ context.Context, id uuid.UUID, status dom
 	}
 	return nil
 }
+func (m *mockAuditRepo) MarkSent(_ context.Context, id uuid.UUID, externalID string) error {
+	for _, e := range m.entries {
+		if e.ID == id {
+			e.Status = domain.AuditStatusSent
+			e.ExternalID = externalID
+		}
+	}
+	return nil
+}
+func (m *mockAuditRepo) MarkOutboundStatusByExternalID(_ context.Context, _ uuid.UUID, externalID string, status domain.AuditStatus) error {
+	for _, e := range m.entries {
+		if e.ExternalID == externalID && e.Direction == domain.AuditDirectionOutbound {
+			e.Status = status
+		}
+	}
+	return nil
+}
 func (m *mockAuditRepo) ListByConsumer(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ domain.AuditStatus, _ int) ([]*domain.MessageAuditEntry, error) {
 	return m.entries, nil
 }
@@ -56,13 +73,14 @@ func (m *mockAuditRepo) SummarizeIntegration(_ context.Context, _ uuid.UUID, _ t
 }
 
 type mockProvider struct {
-	sendErr error
-	sent    bool
+	sendErr   error
+	sent      bool
+	messageID string
 }
 
-func (m *mockProvider) SendMessage(_ context.Context, _ uuid.UUID, _ string, _ *domain.Message) error {
+func (m *mockProvider) SendMessage(_ context.Context, _ uuid.UUID, _ string, _ *domain.Message) (string, error) {
 	m.sent = true
-	return m.sendErr
+	return m.messageID, m.sendErr
 }
 func (m *mockProvider) SendTemplate(_ context.Context, _ uuid.UUID, _, _ string, _ map[string]string) error {
 	return nil
@@ -136,7 +154,7 @@ func TestSendMessage_Success_RecordsAcceptedThenSent(t *testing.T) {
 		ID: integrationID, ConsumerID: consumerID, Provider: "twilio", Active: true,
 	}}
 	audit := &mockAuditRepo{}
-	provider := &mockProvider{}
+	provider := &mockProvider{messageID: "SM123abc"}
 
 	uc := application.NewSendMessageUseCase(integrations, audit, map[string]domain.OutboundProvider{"twilio": provider})
 
@@ -155,6 +173,11 @@ func TestSendMessage_Success_RecordsAcceptedThenSent(t *testing.T) {
 	}
 	if len(audit.entries) != 1 || audit.entries[0].Status != domain.AuditStatusSent {
 		t.Fatalf("expected exactly 1 sent audit entry, got %+v", audit.entries)
+	}
+	// The provider's message id must be persisted so a later delivery/read
+	// status webhook can correlate back to this send.
+	if audit.entries[0].ExternalID != "SM123abc" {
+		t.Fatalf("expected provider message id stored as external_id, got %q", audit.entries[0].ExternalID)
 	}
 }
 

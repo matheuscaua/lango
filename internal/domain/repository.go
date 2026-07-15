@@ -10,7 +10,11 @@ import (
 // (Meta Cloud API, Evolution API, Twilio). Implementations look up the
 // Integration's credentials by IntegrationID.
 type OutboundProvider interface {
-	SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *Message) error
+	// SendMessage delivers msg and returns the provider's own message id — the
+	// key a later delivery/read status webhook is matched against. Providers
+	// that don't surface an id return "" (delivery receipts then simply can't be
+	// correlated for that send).
+	SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *Message) (string, error)
 	SendTemplate(ctx context.Context, integrationID uuid.UUID, phone, templateName string, vars map[string]string) error
 }
 

@@ -47,6 +47,40 @@ func (r *AuditRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status
 	return nil
 }
 
+func (r *AuditRepository) MarkSent(ctx context.Context, id uuid.UUID, externalID string) error {
+	const q = `UPDATE message_audit_entries SET status = 'sent', external_id = $2 WHERE id = $1`
+	_, err := r.db.Exec(ctx, q, id, externalID)
+	if err != nil {
+		return fmt.Errorf("mark audit entry sent: %w", err)
+	}
+	return nil
+}
+
+// MarkOutboundStatusByExternalID advances the outbound entry matching
+// (integration_id, external_id) to `status`, but only forward through the
+// delivery lifecycle — the rank guard in SQL ignores late/duplicate/out-of-order
+// provider callbacks (e.g. a stray "delivered" arriving after "read"). Matching
+// zero rows is not an error: status callbacks for messages sent before receipts
+// existed, or for non-tracked sends, are silently ignored.
+func (r *AuditRepository) MarkOutboundStatusByExternalID(ctx context.Context, integrationID uuid.UUID, externalID string, status domain.AuditStatus) error {
+	if externalID == "" {
+		return nil
+	}
+	const q = `
+		UPDATE message_audit_entries
+		SET status = $3
+		WHERE integration_id = $1
+		  AND external_id = $2
+		  AND direction = 'outbound'
+		  AND COALESCE(array_position(ARRAY['accepted','sent','delivered','read'], status), -1)
+		      < array_position(ARRAY['accepted','sent','delivered','read'], $3)`
+	_, err := r.db.Exec(ctx, q, integrationID, externalID, string(status))
+	if err != nil {
+		return fmt.Errorf("mark outbound status by external id: %w", err)
+	}
+	return nil
+}
+
 func (r *AuditRepository) SummarizeIntegration(ctx context.Context, integrationID uuid.UUID, since time.Time) (*domain.IntegrationActivitySummary, error) {
 	const q = `
 		SELECT
@@ -57,7 +91,7 @@ func (r *AuditRepository) SummarizeIntegration(ctx context.Context, integrationI
 				WHERE integration_id = $1 AND direction = 'outbound'
 				ORDER BY created_at DESC LIMIT 1
 			), '') AS last_outbound_status,
-			COUNT(*) FILTER (WHERE direction = 'outbound' AND status = 'sent' AND created_at >= $2) AS sent_count,
+			COUNT(*) FILTER (WHERE direction = 'outbound' AND status IN ('sent', 'delivered', 'read') AND created_at >= $2) AS sent_count,
 			COUNT(*) FILTER (WHERE direction = 'outbound'
 				AND status IN ('failed', 'rejected', 'forward_failed')
 				AND created_at >= $2) AS failed_count

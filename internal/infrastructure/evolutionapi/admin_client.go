@@ -85,8 +85,10 @@ func (c *AdminClient) CreateInstance(ctx context.Context, instanceName string) e
 func (c *AdminClient) SetWebhook(ctx context.Context, instanceName, webhookURL string) error {
 	payload := map[string]any{
 		"webhook": map[string]any{
-			"url":     webhookURL,
-			"events":  []string{"MESSAGES_UPSERT"},
+			"url": webhookURL,
+			// MESSAGES_UPSERT = inbound customer messages; MESSAGES_UPDATE =
+			// delivery/read acks for messages we sent (see webhook handler).
+			"events":  []string{"MESSAGES_UPSERT", "MESSAGES_UPDATE"},
 			"enabled": true,
 		},
 	}

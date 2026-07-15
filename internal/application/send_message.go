@@ -62,13 +62,15 @@ func (uc *SendMessageUseCase) Execute(ctx context.Context, in SendMessageInput) 
 		return fmt.Errorf("send message: append audit: %w", err)
 	}
 
-	sendErr := provider.SendMessage(ctx, in.IntegrationID, in.Phone, in.Message)
+	providerMessageID, sendErr := provider.SendMessage(ctx, in.IntegrationID, in.Phone, in.Message)
 	if sendErr != nil {
 		_ = uc.audit.UpdateStatus(ctx, entry.ID, domain.AuditStatusFailed, sendErr.Error())
 		return fmt.Errorf("send message: %w", sendErr)
 	}
 
-	_ = uc.audit.UpdateStatus(ctx, entry.ID, domain.AuditStatusSent, "")
+	// Store the provider's message id alongside status=sent so a later
+	// delivery/read status webhook can find this entry (MarkOutboundStatusByExternalID).
+	_ = uc.audit.MarkSent(ctx, entry.ID, providerMessageID)
 	return nil
 }
 

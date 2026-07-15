@@ -60,10 +60,10 @@ func (p *Provider) WithMetrics(m domain.MessageMetrics) *Provider {
 	return p
 }
 
-func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *domain.Message) error {
+func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *domain.Message) (string, error) {
 	cfg, err := p.integrations.GetByID(ctx, integrationID)
 	if err != nil {
-		return fmt.Errorf("get integration %s: %w", integrationID, err)
+		return "", fmt.Errorf("get integration %s: %w", integrationID, err)
 	}
 	accountSID := cfg.VerifyToken
 	authToken := cfg.AccessToken
@@ -79,22 +79,23 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 	case domain.TypeInteractive:
 		var list domain.ListMessage
 		if err := json.Unmarshal([]byte(msg.Content), &list); err != nil {
-			return fmt.Errorf("decode interactive list payload: %w", err)
+			return "", fmt.Errorf("decode interactive list payload: %w", err)
 		}
 		contentSID, err := p.getOrCreateContentTemplate(ctx, accountSID, authToken, list)
 		if err != nil {
-			return fmt.Errorf("resolve content template: %w", err)
+			return "", fmt.Errorf("resolve content template: %w", err)
 		}
 		form.Set("ContentSid", contentSID)
 
 	default:
-		return fmt.Errorf("twilio: unsupported message type %s", msg.Type)
+		return "", fmt.Errorf("twilio: unsupported message type %s", msg.Type)
 	}
 
 	messagesURL := fmt.Sprintf("%s/Accounts/%s/Messages.json", messagesAPIBaseURL, accountSID)
 	body := strings.NewReader(form.Encode())
-	if _, err := p.doRequest(ctx, messagesURL, accountSID, authToken, body, "application/x-www-form-urlencoded"); err != nil {
-		return fmt.Errorf("send twilio message: %w", err)
+	respBody, err := p.doRequest(ctx, messagesURL, accountSID, authToken, body, "application/x-www-form-urlencoded")
+	if err != nil {
+		return "", fmt.Errorf("send twilio message: %w", err)
 	}
 
 	if p.metrics != nil {
@@ -105,7 +106,13 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 		}()
 	}
 
-	return nil
+	// Twilio returns { "sid": "SM..." }; that SID is what its status callbacks
+	// (delivered/read) reference. Best-effort parse.
+	var sent struct {
+		SID string `json:"sid"`
+	}
+	_ = json.Unmarshal(respBody, &sent)
+	return sent.SID, nil
 }
 
 // SendTemplate is a lightweight fallback (matches evolutionapi's behavior):
@@ -117,7 +124,8 @@ func (p *Provider) SendTemplate(ctx context.Context, integrationID uuid.UUID, ph
 	for k, v := range vars {
 		text += fmt.Sprintf("\n%s: %s", k, v)
 	}
-	return p.SendMessage(ctx, integrationID, phone, &domain.Message{Type: domain.TypeText, Content: text})
+	_, err := p.SendMessage(ctx, integrationID, phone, &domain.Message{Type: domain.TypeText, Content: text})
+	return err
 }
 
 // getOrCreateContentTemplate resolves a Twilio Content Template SID for the

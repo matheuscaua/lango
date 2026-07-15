@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -51,33 +52,34 @@ func (p *Provider) WithBaseURL(u string) *Provider {
 }
 
 // SendMessage delivers a text or template message to the customer's WhatsApp number.
-func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *domain.Message) error {
+func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, phone string, msg *domain.Message) (string, error) {
 	cfg, err := p.integrations.GetByID(ctx, integrationID)
 	if err != nil {
-		return fmt.Errorf("get integration %s: %w", integrationID, err)
+		return "", fmt.Errorf("get integration %s: %w", integrationID, err)
 	}
 
 	body, err := buildSendBody(phone, msg)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	url := fmt.Sprintf("%s/%s/messages", p.baseURL, cfg.PhoneNumberID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build whatsapp request: %w", err)
+		return "", fmt.Errorf("build whatsapp request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.AccessToken)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("send whatsapp message: %w", err)
+		return "", fmt.Errorf("send whatsapp message: %w", err)
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("whatsapp API returned HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("whatsapp API returned HTTP %d: %s", resp.StatusCode, respBody)
 	}
 
 	if p.metrics != nil {
@@ -88,7 +90,18 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 		}()
 	}
 
-	return nil
+	// Meta Cloud API returns { messages: [{ id: "wamid..." }] }; that id is the
+	// key its status webhooks (sent/delivered/read) reference. Best-effort parse.
+	var sent struct {
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+	}
+	_ = json.Unmarshal(respBody, &sent)
+	if len(sent.Messages) > 0 {
+		return sent.Messages[0].ID, nil
+	}
+	return "", nil
 }
 
 // SendTemplate sends a WhatsApp template message (used for notifications outside 24h window).
