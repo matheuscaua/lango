@@ -18,7 +18,8 @@ type IntegrationHandler struct {
 	repo            domain.IntegrationRepository
 	audit           domain.MessageAuditRepository
 	evolutionAPIKey string
-	connect         *application.ConnectIntegrationUseCase // nil disables POST /:id/connect (501)
+	connect         *application.ConnectIntegrationUseCase    // nil disables POST /:id/connect (501)
+	disconnect      *application.DisconnectIntegrationUseCase // nil disables DELETE /:id (501)
 }
 
 func NewIntegrationHandler(
@@ -26,8 +27,9 @@ func NewIntegrationHandler(
 	audit domain.MessageAuditRepository,
 	evolutionAPIKey string,
 	connect *application.ConnectIntegrationUseCase,
+	disconnect *application.DisconnectIntegrationUseCase,
 ) *IntegrationHandler {
-	return &IntegrationHandler{repo: repo, audit: audit, evolutionAPIKey: evolutionAPIKey, connect: connect}
+	return &IntegrationHandler{repo: repo, audit: audit, evolutionAPIKey: evolutionAPIKey, connect: connect, disconnect: disconnect}
 }
 
 type createIntegrationRequest struct {
@@ -204,6 +206,42 @@ func (h *IntegrationHandler) Connect(c *fiber.Ctx) error {
 		"state":     string(result.State),
 		"qr_base64": result.QRBase64,
 	})
+}
+
+// Disconnect handles DELETE /v1/integrations/:id — ends the WhatsApp session
+// (Evolution logout + instance delete) and removes the integration, so an old
+// linked number is actually disconnected and the slot is free for a fresh
+// connect. Scoped to the authenticated consumer.
+func (h *IntegrationHandler) Disconnect(c *fiber.Ctx) error {
+	if h.disconnect == nil {
+		return fiber.NewError(fiber.StatusNotImplemented, "disconnect flow is not configured on this lango instance")
+	}
+
+	consumerID, ok := pkgmiddleware.ConsumerIDFromLocals(c)
+	if !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "missing consumer context")
+	}
+
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid integration id")
+	}
+
+	err = h.disconnect.Execute(c.Context(), application.DisconnectIntegrationInput{
+		ConsumerID:    consumerID,
+		IntegrationID: id,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrIntegrationNotFound), errors.Is(err, domain.ErrIntegrationNotOwned):
+			// Already gone (or never owned) → the desired end state is reached.
+			return c.SendStatus(fiber.StatusNoContent)
+		default:
+			return fiber.NewError(fiber.StatusBadGateway, "failed to disconnect integration")
+		}
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func integrationResponse(i *domain.Integration) fiber.Map {

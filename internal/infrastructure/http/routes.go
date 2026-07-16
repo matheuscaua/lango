@@ -41,6 +41,7 @@ func RegisterRoutes(
 	v1.Get("/integrations/:id", integrations.Get)
 	v1.Get("/integrations/:id/status", integrations.Status)
 	v1.Post("/integrations/:id/connect", integrations.Connect)
+	v1.Delete("/integrations/:id", integrations.Disconnect)
 	v1.Post("/integrations/:id/messages", messages.Send)
 
 	v1.Get("/audit", audit.List)

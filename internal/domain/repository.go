@@ -34,4 +34,10 @@ type EvolutionAdmin interface {
 	SetWebhook(ctx context.Context, instanceName, webhookURL string) error
 	ConnectionState(ctx context.Context, instanceName string) (string, error)
 	GetQR(ctx context.Context, instanceName string) (string, error)
+	// LogoutInstance ends the linked WhatsApp session (unpairs the phone), so a
+	// previously-connected number is actually disconnected. Idempotent.
+	LogoutInstance(ctx context.Context, instanceName string) error
+	// DeleteInstance removes the Evolution instance entirely, so a fresh connect
+	// starts from a clean state. Idempotent (a missing instance is success).
+	DeleteInstance(ctx context.Context, instanceName string) error
 }

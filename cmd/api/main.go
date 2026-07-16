@@ -75,6 +75,7 @@ func main() {
 	connectUC := application.NewConnectIntegrationUseCase(integrationRepo, evolutionAdmin, func(integrationID uuid.UUID) string {
 		return fmt.Sprintf("%s/webhooks/evolution/%s", cfg.EvolutionWebhookBaseURL, integrationID)
 	})
+	disconnectUC := application.NewDisconnectIntegrationUseCase(integrationRepo, evolutionAdmin)
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	app := fiber.New(fiber.Config{
@@ -118,7 +119,7 @@ func main() {
 	webhookMeta := infrahttp.NewWebhookHandler(integrationRepo, forwardUC, cfg.WhatsAppAppSecret)
 	webhookEvolution := infrahttp.NewWebhookEvolutionHandler(forwardUC, auditRepo)
 	webhookTwilio := infrahttp.NewWebhookTwilioHandler(integrationRepo, forwardUC, cfg.PublicWebhookBaseURL)
-	integrationHandler := infrahttp.NewIntegrationHandler(integrationRepo, auditRepo, cfg.EvolutionAPIKey, connectUC)
+	integrationHandler := infrahttp.NewIntegrationHandler(integrationRepo, auditRepo, cfg.EvolutionAPIKey, connectUC, disconnectUC)
 	messageHandler := infrahttp.NewMessageHandler(sendUC)
 	auditHandler := infrahttp.NewAuditHandler(auditRepo)
 

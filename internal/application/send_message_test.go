@@ -29,6 +29,10 @@ func (m *mockIntegrationRepo) ListByConsumer(_ context.Context, _ uuid.UUID) ([]
 	return nil, nil
 }
 func (m *mockIntegrationRepo) Update(_ context.Context, _ *domain.Integration) error { return nil }
+func (m *mockIntegrationRepo) Delete(_ context.Context, _ uuid.UUID) error {
+	m.integration = nil
+	return nil
+}
 
 type mockAuditRepo struct {
 	entries []*domain.MessageAuditEntry

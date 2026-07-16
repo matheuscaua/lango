@@ -32,4 +32,7 @@ type IntegrationRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*Integration, error)
 	ListByConsumer(ctx context.Context, consumerID uuid.UUID) ([]*Integration, error)
 	Update(ctx context.Context, i *Integration) error
+	// Delete removes an integration permanently (disconnect flow). Idempotent —
+	// no error when the row is already gone (the desired end state is reached).
+	Delete(ctx context.Context, id uuid.UUID) error
 }

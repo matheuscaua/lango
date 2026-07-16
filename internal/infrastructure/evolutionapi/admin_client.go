@@ -127,6 +127,42 @@ func (c *AdminClient) ConnectionState(ctx context.Context, instanceName string) 
 	return resp.State, nil
 }
 
+// LogoutInstance ends the WhatsApp session for an instance (Evolution
+// `DELETE /instance/logout/:name`), unpairing the linked phone. Idempotent: a
+// 404 (instance gone) or a "not connected" 400/401 is treated as success —
+// either way the number ends up disconnected.
+func (c *AdminClient) LogoutInstance(ctx context.Context, instanceName string) error {
+	body, status, err := c.do(ctx, http.MethodDelete, "/instance/logout/"+instanceName, nil)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound || status == http.StatusBadRequest || status == http.StatusUnauthorized {
+		return nil // already logged out / not connected — desired end state reached
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("evolution logout instance: HTTP %d: %s", status, string(body))
+	}
+	return nil
+}
+
+// DeleteInstance removes an instance entirely (Evolution
+// `DELETE /instance/delete/:name`). Idempotent: a 404 means it's already gone.
+// Evolution requires an instance to be logged out before deletion, so callers
+// should LogoutInstance first.
+func (c *AdminClient) DeleteInstance(ctx context.Context, instanceName string) error {
+	body, status, err := c.do(ctx, http.MethodDelete, "/instance/delete/"+instanceName, nil)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound {
+		return nil
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("evolution delete instance: HTTP %d: %s", status, string(body))
+	}
+	return nil
+}
+
 // GetQR fetches the current QR code as a base64-encoded PNG (data URI prefix
 // stripped). Baileys QR codes expire after ~20-30s — callers must re-fetch
 // periodically while polling for connection.

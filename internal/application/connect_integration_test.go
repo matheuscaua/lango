@@ -11,12 +11,14 @@ import (
 )
 
 type mockEvolutionAdmin struct {
-	state        string
-	stateErr     error
-	qr           string
-	qrErr        error
-	createCalled bool
-	webhookURL   string
+	state         string
+	stateErr      error
+	qr            string
+	qrErr         error
+	createCalled  bool
+	webhookURL    string
+	logoutCalled  bool
+	deleteCalled  bool
 }
 
 func (m *mockEvolutionAdmin) CreateInstance(_ context.Context, _ string) error {
@@ -32,6 +34,14 @@ func (m *mockEvolutionAdmin) ConnectionState(_ context.Context, _ string) (strin
 }
 func (m *mockEvolutionAdmin) GetQR(_ context.Context, _ string) (string, error) {
 	return m.qr, m.qrErr
+}
+func (m *mockEvolutionAdmin) LogoutInstance(_ context.Context, _ string) error {
+	m.logoutCalled = true
+	return nil
+}
+func (m *mockEvolutionAdmin) DeleteInstance(_ context.Context, _ string) error {
+	m.deleteCalled = true
+	return nil
 }
 
 func newConnectUC(integrations *mockIntegrationRepo, admin *mockEvolutionAdmin) *application.ConnectIntegrationUseCase {

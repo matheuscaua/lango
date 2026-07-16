@@ -80,6 +80,14 @@ func (r *IntegrationRepository) Update(ctx context.Context, i *domain.Integratio
 	return nil
 }
 
+func (r *IntegrationRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	// Idempotent: a missing row already satisfies "integration is gone".
+	if _, err := r.db.Exec(ctx, `DELETE FROM integrations WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete integration: %w", err)
+	}
+	return nil
+}
+
 type scannable interface {
 	Scan(dest ...any) error
 }
