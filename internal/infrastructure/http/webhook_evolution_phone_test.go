@@ -83,8 +83,8 @@ func TestResolveInboundPhone(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected ok=true for group chat with flag enabled")
 		}
-		if phone != "123456789" {
-			t.Errorf("expected phone='123456789', got %q", phone)
+		if phone != "123456789@g.us" {
+			t.Errorf("expected phone='123456789@g.us', got %q", phone)
 		}
 	})
 }

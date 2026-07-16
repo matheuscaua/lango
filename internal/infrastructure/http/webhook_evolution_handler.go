@@ -159,7 +159,7 @@ func resolveInboundPhone(key evolutionKey, enableGroupReplies bool) (string, boo
 
 	phone := strings.TrimSuffix(jid, "@s.whatsapp.net")
 	phone = strings.TrimSuffix(phone, "@c.us")
-	phone = strings.TrimSuffix(phone, "@g.us")
+	// Se for grupo (@g.us), preservamos o sufixo para que o Evolution saiba enviar de volta para o grupo.
 	return phone, phone != ""
 }
 
