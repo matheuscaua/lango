@@ -16,8 +16,9 @@ import (
 type WebhookEvolutionHandler struct {
 	forward       *application.ForwardInboundUseCase
 	audit         domain.MessageAuditRepository // nil disables delivery/read receipt handling
-	maxAgeSecs    int                           // 0 = disabled; skip messages older than this
-	allowedPhones map[string]struct{}           // empty = all phones accepted
+	maxAgeSecs         int                           // 0 = disabled; skip messages older than this
+	allowedPhones      map[string]struct{}           // empty = all phones accepted
+	enableGroupReplies bool                          // true = allow bot to reply in groups
 }
 
 func NewWebhookEvolutionHandler(
@@ -25,16 +26,18 @@ func NewWebhookEvolutionHandler(
 	audit domain.MessageAuditRepository,
 	maxAgeSecs int,
 	allowedPhones []string,
+	enableGroupReplies bool,
 ) *WebhookEvolutionHandler {
 	allowed := make(map[string]struct{}, len(allowedPhones))
 	for _, p := range allowedPhones {
 		allowed[p] = struct{}{}
 	}
 	return &WebhookEvolutionHandler{
-		forward:       forward,
-		audit:         audit,
-		maxAgeSecs:    maxAgeSecs,
-		allowedPhones: allowed,
+		forward:            forward,
+		audit:              audit,
+		maxAgeSecs:         maxAgeSecs,
+		allowedPhones:      allowed,
+		enableGroupReplies: enableGroupReplies,
 	}
 }
 
@@ -78,7 +81,7 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	phone, ok := resolveInboundPhone(key)
+	phone, ok := resolveInboundPhone(key, h.enableGroupReplies)
 	if !ok {
 		return c.SendStatus(fiber.StatusOK)
 	}
@@ -138,9 +141,12 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 // WhatsApp LID addressing (privacy-preserving identity, increasingly the
 // default) puts an opaque Linked ID in remoteJid and the real phone in
 // remoteJidAlt — this is where that gets unwrapped.
-func resolveInboundPhone(key evolutionKey) (string, bool) {
+func resolveInboundPhone(key evolutionKey, enableGroupReplies bool) (string, bool) {
 	jid := key.RemoteJid
-	if strings.HasSuffix(jid, "@g.us") || strings.HasSuffix(jid, "@broadcast") || strings.HasSuffix(jid, "@newsletter") {
+	if strings.HasSuffix(jid, "@broadcast") || strings.HasSuffix(jid, "@newsletter") {
+		return "", false
+	}
+	if strings.HasSuffix(jid, "@g.us") && !enableGroupReplies {
 		return "", false
 	}
 
@@ -153,6 +159,7 @@ func resolveInboundPhone(key evolutionKey) (string, bool) {
 
 	phone := strings.TrimSuffix(jid, "@s.whatsapp.net")
 	phone = strings.TrimSuffix(phone, "@c.us")
+	phone = strings.TrimSuffix(phone, "@g.us")
 	return phone, phone != ""
 }
 

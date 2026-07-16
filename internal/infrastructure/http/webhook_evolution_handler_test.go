@@ -135,7 +135,7 @@ func TestWebhookEvolutionHandler_Filters(t *testing.T) {
 
 			// We need a fiber app to route the request
 			app := fiber.New()
-			handler := NewWebhookEvolutionHandler(forwardUC, auditRepo, tt.maxAgeSecs, tt.allowedPhones)
+			handler := NewWebhookEvolutionHandler(forwardUC, auditRepo, tt.maxAgeSecs, tt.allowedPhones, false)
 			app.Post("/webhooks/evolution/:integration_id", handler.ReceiveWebhook)
 
 			// Construct payload

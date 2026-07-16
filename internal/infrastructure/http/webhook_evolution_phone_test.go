@@ -66,7 +66,7 @@ func TestResolveInboundPhone(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			phone, ok := resolveInboundPhone(tt.key)
+			phone, ok := resolveInboundPhone(tt.key, false)
 			if ok != tt.wantOK {
 				t.Fatalf("ok = %v, want %v (phone=%q)", ok, tt.wantOK, phone)
 			}
@@ -75,4 +75,16 @@ func TestResolveInboundPhone(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("group chat allowed when flag is enabled", func(t *testing.T) {
+		key := evolutionKey{RemoteJid: "123456789@g.us"}
+		// When flag is true, we should get the phone back and ok = true
+		phone, ok := resolveInboundPhone(key, true)
+		if !ok {
+			t.Fatalf("expected ok=true for group chat with flag enabled")
+		}
+		if phone != "123456789" {
+			t.Errorf("expected phone='123456789', got %q", phone)
+		}
+	})
 }

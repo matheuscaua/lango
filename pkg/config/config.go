@@ -64,6 +64,10 @@ type Config struct {
 	// BotAllowedPhones, when non-empty, restricts inbound processing to only
 	// these phone numbers (bare digits, no "+" prefix). Empty = no restriction.
 	BotAllowedPhones []string
+
+	// BotEnableGroupReplies allows the bot to reply to group messages.
+	// Normally bots only engage in 1:1 conversations.
+	BotEnableGroupReplies bool
 }
 
 func Load() (*Config, error) {
@@ -104,6 +108,10 @@ func Load() (*Config, error) {
 				cfg.BotAllowedPhones = append(cfg.BotAllowedPhones, p)
 			}
 		}
+	}
+
+	if raw := os.Getenv("BOT_ENABLE_GROUP_REPLIES"); raw != "" {
+		cfg.BotEnableGroupReplies = strings.ToLower(raw) == "true"
 	}
 
 	if err := cfg.validate(); err != nil {
