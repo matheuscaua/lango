@@ -51,12 +51,18 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 
 	data := payload.Data
 
+	// Support both Evolution API v1 (flat) and v2 (nested inside data.message)
+	key := data.Key
+	if key.RemoteJid == "" && data.Message.Key.RemoteJid != "" {
+		key = data.Message.Key
+	}
+
 	// Skip messages sent by us (fromMe=true) or without a remoteJid.
-	if data.Key.FromMe || data.Key.RemoteJid == "" {
+	if key.FromMe || key.RemoteJid == "" {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	phone, ok := resolveInboundPhone(data.Key)
+	phone, ok := resolveInboundPhone(key)
 	if !ok {
 		return c.SendStatus(fiber.StatusOK)
 	}
@@ -69,7 +75,7 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 	event := domain.InboundEvent{
 		From:       phone,
 		Content:    content,
-		ExternalID: data.Key.ID,
+		ExternalID: key.ID,
 		ReceivedAt: time.Now().UTC(),
 	}
 	h.forward.Execute(c.Context(), integrationID, event, correlationIDFrom(c))
@@ -148,19 +154,30 @@ func mapEvolutionAckStatus(raw string) (domain.AuditStatus, bool) {
 }
 
 func extractContent(data evolutionData) string {
-	switch data.MessageType {
+	msgType := data.MessageType
+	msg := data.Message
+
+	// Fallback to nested v2 structure
+	if msgType == "" && msg.MessageType != "" {
+		msgType = msg.MessageType
+	}
+	if msg.Message != nil {
+		msg = *msg.Message
+	}
+
+	switch msgType {
 	case "conversation":
-		return data.Message.Conversation
+		return msg.Conversation
 	case "extendedTextMessage":
-		return data.Message.ExtendedTextMessage.Text
+		return msg.ExtendedTextMessage.Text
 	case "listResponseMessage":
 		// Customer tapped a row in a WhatsApp List Message — the row ID is
 		// opaque to lango (see domain.ListRow) and flows through unchanged
 		// as ButtonPayload for the consumer to interpret.
-		return data.Message.ListResponseMessage.SingleSelectReply.SelectedRowID
+		return msg.ListResponseMessage.SingleSelectReply.SelectedRowID
 	default:
-		if data.MessageType != "" {
-			return fmt.Sprintf("[MEDIA:%s]", strings.ToUpper(data.MessageType))
+		if msgType != "" {
+			return fmt.Sprintf("[MEDIA:%s]", strings.ToUpper(msgType))
 		}
 		return ""
 	}
@@ -194,6 +211,11 @@ type evolutionKey struct {
 }
 
 type evolutionMessage struct {
+	// Evolution API v2 nests these inside data.message for messages.upsert
+	Key         evolutionKey      `json:"key"`
+	MessageType string            `json:"messageType"`
+	Message     *evolutionMessage `json:"message"`
+
 	Conversation        string                       `json:"conversation"`
 	ExtendedTextMessage evolutionExtendedTextMessage `json:"extendedTextMessage"`
 	ListResponseMessage evolutionListResponseMessage `json:"listResponseMessage"`
