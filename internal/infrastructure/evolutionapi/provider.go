@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,10 +56,15 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 	var path string
 	var payload map[string]any
 
+	evolutionJID := strings.TrimPrefix(phone, "+")
+	if !strings.Contains(evolutionJID, "@") {
+		evolutionJID += "@s.whatsapp.net"
+	}
+
 	switch msg.Type {
 	case domain.TypeText:
 		path = "sendText"
-		payload = map[string]any{"number": phone, "text": msg.Content}
+		payload = map[string]any{"number": evolutionJID, "text": msg.Content}
 
 	case domain.TypeInteractive:
 		var list domain.ListMessage
@@ -67,7 +73,7 @@ func (p *Provider) SendMessage(ctx context.Context, integrationID uuid.UUID, pho
 		}
 		path = "sendList"
 		payload = map[string]any{
-			"number":      phone,
+			"number":      evolutionJID,
 			"title":       list.Title,
 			"description": list.Description,
 			"footerText":  list.Footer,
@@ -136,8 +142,13 @@ func (p *Provider) SendTemplate(ctx context.Context, integrationID uuid.UUID, ph
 		text += fmt.Sprintf("\n%s: %s", k, v)
 	}
 
+	evolutionJID := strings.TrimPrefix(phone, "+")
+	if !strings.Contains(evolutionJID, "@") {
+		evolutionJID += "@s.whatsapp.net"
+	}
+
 	payload, _ := json.Marshal(map[string]any{
-		"number": phone,
+		"number": evolutionJID,
 		"text":   text,
 	})
 
