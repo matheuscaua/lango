@@ -6,9 +6,9 @@ import "regexp"
 // (packages/contracts/src/validators.ts) — kept in sync deliberately, since a
 // mismatch here is exactly the class of silent bug this validation exists to
 // prevent (see ADR 008, "Assertividade").
-var e164Pattern = regexp.MustCompile(`^\+[1-9]\d{1,14}$`)
+var validDestinationPattern = regexp.MustCompile(`^\+[1-9]\d{1,14}(?:-\d{1,15})?(?:@g\.us)?$|^\+\d{15,20}@g\.us$`)
 
-// IsE164 reports whether phone is a valid E.164 number (e.g. "+5511999990000").
+// IsE164 reports whether phone is a valid E.164 number (e.g. "+5511999990000") or a valid WhatsApp group JID.
 func IsE164(phone string) bool {
-	return e164Pattern.MatchString(phone)
+	return validDestinationPattern.MatchString(phone)
 }
