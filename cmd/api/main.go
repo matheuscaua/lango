@@ -117,7 +117,7 @@ func main() {
 
 	// ── Handlers + routes ─────────────────────────────────────────────────────
 	webhookMeta := infrahttp.NewWebhookHandler(integrationRepo, forwardUC, cfg.WhatsAppAppSecret)
-	webhookEvolution := infrahttp.NewWebhookEvolutionHandler(forwardUC, auditRepo)
+	webhookEvolution := infrahttp.NewWebhookEvolutionHandler(forwardUC, auditRepo, cfg.BotMessageMaxAgeSecs, cfg.BotAllowedPhones)
 	webhookTwilio := infrahttp.NewWebhookTwilioHandler(integrationRepo, forwardUC, cfg.PublicWebhookBaseURL)
 	integrationHandler := infrahttp.NewIntegrationHandler(integrationRepo, auditRepo, cfg.EvolutionAPIKey, connectUC, disconnectUC)
 	messageHandler := infrahttp.NewMessageHandler(sendUC)
@@ -133,7 +133,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		slog.Info("starting lango", "port", cfg.Port)
+		slog.Info("starting lango", 
+			slog.String("port", cfg.Port),
+			slog.Int("bot_max_age_seconds", cfg.BotMessageMaxAgeSecs),
+			slog.Any("bot_allowed_phones", cfg.BotAllowedPhones),
+		)
 		if err := app.Listen(":" + cfg.Port); err != nil {
 			slog.Error("server error", "err", err)
 		}

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -48,6 +50,20 @@ type Config struct {
 
 	// Observability
 	LogLevel string
+
+	// Bot flood protection — see ADR: when Evolution API connects or
+	// reconnects, Baileys history-syncs every recent message, firing
+	// messages.upsert webhooks for conversations that may be hours/days old.
+	// These two guards prevent the bot from replying to stale messages and
+	// optionally restrict it to a known set of phone numbers.
+
+	// BotMessageMaxAgeSecs ignores inbound messages whose messageTimestamp is
+	// older than this many seconds. 0 disables the guard (all messages pass).
+	BotMessageMaxAgeSecs int
+
+	// BotAllowedPhones, when non-empty, restricts inbound processing to only
+	// these phone numbers (bare digits, no "+" prefix). Empty = no restriction.
+	BotAllowedPhones []string
 }
 
 func Load() (*Config, error) {
@@ -70,6 +86,25 @@ func Load() (*Config, error) {
 		PublicWebhookBaseURL: os.Getenv("PUBLIC_WEBHOOK_BASE_URL"),
 	}
 	cfg.EvolutionWebhookBaseURL = getEnv("EVOLUTION_WEBHOOK_BASE_URL", "http://host.docker.internal:"+cfg.Port)
+
+	// Bot flood protection — parse optional env vars.
+	if raw := os.Getenv("BOT_MESSAGE_MAX_AGE_SECONDS"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			cfg.BotMessageMaxAgeSecs = v
+		}
+	} else {
+		cfg.BotMessageMaxAgeSecs = 120 // sensible default: ignore messages older than 2 minutes
+	}
+
+	if raw := os.Getenv("BOT_ALLOWED_PHONES"); raw != "" {
+		for _, p := range strings.Split(raw, ",") {
+			p = strings.TrimSpace(p)
+			p = strings.TrimPrefix(p, "+")
+			if p != "" {
+				cfg.BotAllowedPhones = append(cfg.BotAllowedPhones, p)
+			}
+		}
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err

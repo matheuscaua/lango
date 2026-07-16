@@ -14,12 +14,28 @@ import (
 
 // WebhookEvolutionHandler handles inbound HTTP events from a self-hosted Evolution API instance.
 type WebhookEvolutionHandler struct {
-	forward *application.ForwardInboundUseCase
-	audit   domain.MessageAuditRepository // nil disables delivery/read receipt handling
+	forward       *application.ForwardInboundUseCase
+	audit         domain.MessageAuditRepository // nil disables delivery/read receipt handling
+	maxAgeSecs    int                           // 0 = disabled; skip messages older than this
+	allowedPhones map[string]struct{}           // empty = all phones accepted
 }
 
-func NewWebhookEvolutionHandler(forward *application.ForwardInboundUseCase, audit domain.MessageAuditRepository) *WebhookEvolutionHandler {
-	return &WebhookEvolutionHandler{forward: forward, audit: audit}
+func NewWebhookEvolutionHandler(
+	forward *application.ForwardInboundUseCase,
+	audit domain.MessageAuditRepository,
+	maxAgeSecs int,
+	allowedPhones []string,
+) *WebhookEvolutionHandler {
+	allowed := make(map[string]struct{}, len(allowedPhones))
+	for _, p := range allowedPhones {
+		allowed[p] = struct{}{}
+	}
+	return &WebhookEvolutionHandler{
+		forward:       forward,
+		audit:         audit,
+		maxAgeSecs:    maxAgeSecs,
+		allowedPhones: allowed,
+	}
 }
 
 // ReceiveWebhook handles POST /webhooks/evolution/:integration_id.
@@ -65,6 +81,36 @@ func (h *WebhookEvolutionHandler) ReceiveWebhook(c *fiber.Ctx) error {
 	phone, ok := resolveInboundPhone(key)
 	if !ok {
 		return c.SendStatus(fiber.StatusOK)
+	}
+
+	// ── Bot flood protection ─────────────────────────────────────────────
+	// Guard 1: message age — when Evolution API (Baileys) connects or
+	// reconnects it history-syncs recent messages, firing messages.upsert
+	// for conversations that may be hours or days old. Without this guard
+	// the bot would reply to every single one, flooding random contacts.
+	if h.maxAgeSecs > 0 && data.MessageTimestamp > 0 {
+		msgTime := time.Unix(data.MessageTimestamp, 0)
+		age := time.Since(msgTime)
+		if age > time.Duration(h.maxAgeSecs)*time.Second {
+			slog.DebugContext(c.Context(), "evolution: skipping stale message",
+				slog.String("phone", phone),
+				slog.Int64("timestamp", data.MessageTimestamp),
+				slog.String("age", age.Truncate(time.Second).String()),
+			)
+			return c.SendStatus(fiber.StatusOK)
+		}
+	}
+
+	// Guard 2: phone allowlist — when configured, only process messages
+	// from numbers in the allowlist. Useful during testing to prevent the
+	// bot from replying to personal contacts on a shared number.
+	if len(h.allowedPhones) > 0 {
+		if _, ok := h.allowedPhones[phone]; !ok {
+			slog.DebugContext(c.Context(), "evolution: phone not in allowlist, skipping",
+				slog.String("phone", phone),
+			)
+			return c.SendStatus(fiber.StatusOK)
+		}
 	}
 
 	content := extractContent(data)
@@ -192,9 +238,10 @@ type evolutionWebhookPayload struct {
 }
 
 type evolutionData struct {
-	Key         evolutionKey     `json:"key"`
-	MessageType string           `json:"messageType"`
-	Message     evolutionMessage `json:"message"`
+	Key              evolutionKey     `json:"key"`
+	MessageType      string           `json:"messageType"`
+	MessageTimestamp  int64            `json:"messageTimestamp"` // unix epoch seconds — set by Baileys/WhatsApp
+	Message          evolutionMessage `json:"message"`
 	// messages.update fields — the sent message's id and its delivery ack.
 	KeyID  string `json:"keyId"`
 	Status string `json:"status"`
